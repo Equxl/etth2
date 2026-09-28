@@ -1,7 +1,7 @@
 -- ============================================================
--- YBA Controller v7.1 (Kavo UI + Fast Pickup)
+-- YBA Controller v7.2 (Kavo UI + Working AutoSell)
 -- ============================================================
-print("[YBA Controller] Загрузка v7.1...")
+print("[YBA Controller] Загрузка v7.2...")
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
 
 -- ============================================================
@@ -16,7 +16,7 @@ local TARGET_ITEMS = {
 }
 
 local LUCKY_ARROW_PRICE = 75000
-local PICKUP_COOLDOWN = 0.5  -- Задержка после подбора (в секундах)
+local PICKUP_COOLDOWN = 0.5
 
 local State = {
     ESP = true,
@@ -28,6 +28,7 @@ local State = {
     FlySpeed = 80,
     PickupRange = 5,
     WalkSpeed = 30,
+    MerchantName = "Merchant",  -- Имя торговца (если не найдёт — попробуем других)
 }
 
 -- ============================================================
@@ -155,7 +156,6 @@ local function startAutoFarm()
         local root = char:FindFirstChild("HumanoidRootPart")
         if not root then return end
 
-        -- Кулдаун после подбора (0.5 сек)
         if tick() - lastPickupTime < PICKUP_COOLDOWN then
             root.AssemblyLinearVelocity = Vector3.zero
             return
@@ -207,33 +207,124 @@ local function stopAutoFarm()
 end
 
 -- ============================================================
--- 5. AUTOSELL
+-- 5. AUTOSELL (ПОЛНОСТЬЮ ПЕРЕПИСАНО)
 -- ============================================================
-local function autoSellItems()
-    if not State.AutoSell then return end
 
+-- Функция: есть ли у игрока предметы в инвентаре
+local function hasItemsInBackpack()
     local backpack = LocalPlayer:FindFirstChild("Backpack")
-    local hasItems = false
-    if backpack then
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then hasItems = true; break end
+    if not backpack then return false end
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("Tool") then return true end
+    end
+    return false
+end
+
+-- Функция: найти торговца (Merchant) в Workspace
+local function findMerchant()
+    -- Ищем по имени
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj.Name:lower():find("merchant") then
+            return obj
+        end
+        if obj:IsA("Model") and obj.Name:lower():find("shop") then
+            return obj
         end
     end
-    if not hasItems then return end
+    return nil
+end
 
+-- Функция: открыть диалог с торговцем
+local function openMerchantDialogue(merchant)
+    if not merchant then return false end
+    -- Ищем ProximityPrompt внутри торговца
+    local prompt = merchant:FindFirstChildOfClass("ProximityPrompt")
+    if not prompt then
+        prompt = merchant:FindFirstChild("ProximityPrompt", true)
+    end
+    if not prompt then return false end
+    
+    pcall(function()
+        fireproximityprompt(prompt)
+    end)
+    return true
+end
+
+-- Функция: нажать кнопку "I'll sell ALL of these"
+local function clickSellAllButton()
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return false end
+    
     for _, gui in ipairs(playerGui:GetChildren()) do
         for _, obj in ipairs(gui:GetDescendants()) do
-            if obj:IsA("TextButton") and obj.Text then
-                local btnText = obj.Text:lower()
-                if btnText:find("sell") and btnText:find("all") then
-                    obj:Fire("MouseButton1Click")
-                    print("[AutoSell] Нажал кнопку: " .. obj.Text)
-                    task.wait(1)
-                    return
+            if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                local txt = (obj.Text or ""):lower()
+                if txt:find("sell") and txt:find("all") then
+                    -- Пробуем разные способы нажатия
+                    pcall(function() obj:Fire("MouseButton1Click") end)
+                    pcall(function() obj:Fire("MouseButton1Down") end)
+                    pcall(function() obj:Fire("MouseButton1Up") end)
+                    print("[AutoSell] Нажал: " .. obj.Text)
+                    return true
                 end
             end
         end
+    end
+    return false
+end
+
+-- Функция: телепортировать к торговцу
+local function teleportToMerchant(merchant)
+    if not merchant then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    local merchantPos = nil
+    if merchant:IsA("Model") and merchant.PrimaryPart then
+        merchantPos = merchant.PrimaryPart.Position
+    elseif merchant:IsA("Model") then
+        local part = merchant:FindFirstChildWhichIsA("BasePart")
+        if part then merchantPos = part.Position end
+    end
+    
+    if merchantPos then
+        root.CFrame = CFrame.new(merchantPos + Vector3.new(0, 3, 3))
+    end
+end
+
+-- Основная логика автопродажи
+local lastSellAttempt = 0
+
+local function autoSellItems()
+    if not State.AutoSell then return end
+    if not hasItemsInBackpack() then return end
+    
+    -- Не спамим: раз в 3 секунды
+    if tick() - lastSellAttempt < 3 then return end
+    lastSellAttempt = tick()
+    
+    local merchant = findMerchant()
+    if not merchant then
+        print("[AutoSell] Торговец не найден в Workspace")
+        return
+    end
+    
+    -- Подлетаем к торговцу
+    teleportToMerchant(merchant)
+    task.wait(0.3)
+    
+    -- Открываем диалог
+    openMerchantDialogue(merchant)
+    task.wait(0.5)
+    
+    -- Нажимаем "Продать всё"
+    local clicked = clickSellAllButton()
+    if clicked then
+        print("[AutoSell] Продажа выполнена")
+    else
+        print("[AutoSell] Кнопка продажи не найдена. Откройте диалог вручную.")
     end
 end
 
@@ -248,17 +339,6 @@ local function getPlayerMoney()
     end
     local attr = LocalPlayer:GetAttribute("Money") or LocalPlayer:GetAttribute("Cash")
     if typeof(attr) == "number" then return attr end
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        local currency = playerGui:FindFirstChild("Currency")
-        if currency then
-            local moneyLabel = currency:FindFirstChild("Money")
-            if moneyLabel and moneyLabel:IsA("TextLabel") then
-                local num = tonumber(moneyLabel.Text:gsub("[^%d]", ""))
-                if num then return num end
-            end
-        end
-    end
     return nil
 end
 
@@ -290,19 +370,11 @@ local function buyLuckyArrow()
     if not char then return false end
     local money = getPlayerMoney()
     if money == nil or money < LUCKY_ARROW_PRICE then return false end
-
     local remote = char:FindFirstChild("RemoteEvent") or findSellRemote()
     if not remote then return false end
-
-    local args = {
-        "PurchaseShopItem",
-        {["ItemName"] = "Lucky Arrow"},
-        1, 2
-    }
+    local args = {"PurchaseShopItem", {["ItemName"] = "Lucky Arrow"}, 1, 2}
     local success = pcall(function() remote:FireServer(unpack(args)) end)
-    if success then
-        print(string.format("[AutoBuy] Куплен Lucky Arrow. Баланс: $%d", money))
-    end
+    if success then print(string.format("[AutoBuy] Куплен Lucky Arrow. Баланс: $%d", money)) end
     return success
 end
 
@@ -352,7 +424,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while task.wait(2) do pcall(autoSellItems) end
+    while task.wait(3) do pcall(autoSellItems) end
 end)
 
 task.spawn(function()
@@ -370,9 +442,8 @@ end)
 -- ============================================================
 -- 9. KAVO UI
 -- ============================================================
-local Window = Library.CreateLib("YBA Controller | v7.1", "BloodTheme")
+local Window = Library.CreateLib("YBA Controller | v7.2", "BloodTheme")
 
--- ----- Вкладка AutoFarm -----
 local FarmTab = Window:NewTab("AutoFarm")
 local FarmSection = FarmTab:NewSection("Автоматизация")
 
@@ -386,54 +457,44 @@ FarmSection:NewToggle("★ AutoFarm", "Автоматический поиск �
     end
 end)
 
-FarmSection:NewToggle("Авто-продажа", "Продавать предметы через 'I'll sell ALL of these'", function(v)
+FarmSection:NewToggle("Авто-продажа", "Подлетает к торговцу и продаёт всё", function(v)
     State.AutoSell = v
+    if v then
+        print("[AutoSell] Включено. Скрипт будет искать торговца в Workspace.")
+    end
 end)
 
 FarmSection:NewToggle("Авто-покупка Lucky Arrow", "Покупать при балансе $" .. LUCKY_ARROW_PRICE .. "+", function(v)
     State.AutoBuyLucky = v
 end)
 
-FarmSection:NewSlider("Скорость полёта", "Скорость перемещения", 200, 30, function(v)
-    State.FlySpeed = v
-end)
+FarmSection:NewSlider("Скорость полёта", "Скорость перемещения", 200, 30, function(v) State.FlySpeed = v end)
+FarmSection:NewSlider("Дистанция подбора", "На каком расстоянии подбирать", 10, 1, function(v) State.PickupRange = v end)
 
-FarmSection:NewSlider("Дистанция подбора", "На каком расстоянии подбирать", 10, 1, function(v)
-    State.PickupRange = v
-end)
-
--- ----- Вкладка Visuals -----
 local VisualTab = Window:NewTab("Visuals")
 local VisualSection = VisualTab:NewSection("ESP")
-
 VisualSection:NewToggle("ESP предметов", "Подсвечивать предметы", function(v)
     State.ESP = v
     if not v then clearAllESP() end
 end)
 
--- ----- Вкладка Movement -----
 local MoveTab = Window:NewTab("Movement")
 local MoveSection = MoveTab:NewSection("Скорость и коллизии")
-
 MoveSection:NewToggle("Noclip", "Проход сквозь стены", function(v)
     State.Noclip = v
     if v then startNoclip() else stopNoclip() end
 end)
-
 MoveSection:NewToggle("Ускорение", "Увеличить скорость ходьбы", function(v)
     State.Speed = v
     applySpeed()
 end)
-
 MoveSection:NewSlider("Скорость ходьбы", "Значение WalkSpeed", 150, 16, function(v)
     State.WalkSpeed = v
     if State.Speed then applySpeed() end
 end)
 
--- ----- Вкладка Items -----
 local ItemsTab = Window:NewTab("Items")
 local ItemsSection = ItemsTab:NewSection("Выбор предметов")
-
 local allItems = {
     "Rokakaka", "Lucky Arrow", "Caesar's Headband", "Clackers",
     "Ancient Scroll", "Diamond", "Dio's Diary", "Gold Coin",
@@ -441,7 +502,6 @@ local allItems = {
     "Quinton's Glove", "Rib Cage of The Saint's Corpse",
     "Steel Ball", "Stone Mask", "Zeppeli's Hat",
 }
-
 ItemsSection:NewDropdown("Добавить предмет", "Добавить в TARGET_ITEMS", allItems, function(selected)
     local exists = false
     for _, item in ipairs(TARGET_ITEMS) do
@@ -450,25 +510,40 @@ ItemsSection:NewDropdown("Добавить предмет", "Добавить в
     if not exists then
         table.insert(TARGET_ITEMS, selected)
         print("[YBA] Добавлен: " .. selected)
-    else
-        print("[YBA] Уже в списке: " .. selected)
     end
 end)
 
-ItemsSection:NewButton("Очистить список", "Удалить все предметы", function()
-    table.clear(TARGET_ITEMS)
-    clearAllESP()
-    print("[YBA] Список очищен")
+ItemsSection:NewButton("Найти торговца (Debug)", "Показать всех NPC рядом", function()
+    print("[DEBUG] Поиск торговцев в Workspace...")
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") and (obj.Name:lower():find("merchant") or obj.Name:lower():find("shop") or obj.Name:lower():find("sell")) then
+            print("  Найден: " .. obj:GetFullName() .. " | Класс: " .. obj.ClassName)
+            local prompt = obj:FindFirstChildOfClass("ProximityPrompt")
+            if prompt then
+                print("    ProximityPrompt: " .. prompt.ObjectText .. " | ActionText: " .. prompt.ActionText)
+            end
+        end
+    end
+    print("[DEBUG] Поиск завершен.")
 end)
 
--- ----- Вкладка Info -----
+ItemsSection:NewButton("Показать все кнопки (Debug)", "Список кнопок в PlayerGui", function()
+    print("[DEBUG] Кнопки в PlayerGui:")
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    for _, gui in ipairs(pg:GetChildren()) do
+        for _, obj in ipairs(gui:GetDescendants()) do
+            if obj:IsA("TextButton") and obj.Text and obj.Text ~= "" then
+                print("  [" .. obj.Text .. "] | " .. obj:GetFullName())
+            end
+        end
+    end
+end)
+
 local InfoTab = Window:NewTab("Info")
 local InfoSection = InfoTab:NewSection("О скрипте")
-
-InfoSection:NewLabel("YBA Controller v7.1")
+InfoSection:NewLabel("YBA Controller v7.2")
+InfoSection:NewLabel("AutoSell: подлетает к торговцу и жмёт кнопку")
 InfoSection:NewLabel("Задержка подбора: " .. PICKUP_COOLDOWN .. " сек")
-InfoSection:NewLabel("ESP ищет предметы в Item_Spawns.Items")
-InfoSection:NewLabel("AutoFarm использует fireproximityprompt")
-InfoSection:NewLabel("Внимание: читы могут привести к бану!")
+InfoSection:NewLabel("Используйте Debug-кнопки для диагностики")
 
-print("[YBA Controller] v7.1 загружена. Задержка подбора: " .. PICKUP_COOLDOWN .. " сек.")
+print("[YBA Controller] v7.2 загружена. Используйте Debug-кнопки если AutoSell не работает.")
