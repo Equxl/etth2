@@ -1,11 +1,11 @@
 -- ============================================================
--- ========== 1. ЗАГРУЗКА KAVO UI =============================
+-- YBA Controller v7.1 (Kavo UI + Fast Pickup)
 -- ============================================================
-print("[YBA Controller] Загрузка v7.0 (Kavo UI)...")
+print("[YBA Controller] Загрузка v7.1...")
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
 
 -- ============================================================
--- ========== 2. НАСТРОЙКИ И СОСТОЯНИЕ ========================
+-- 1. НАСТРОЙКИ
 -- ============================================================
 local TARGET_ITEMS = {
     "Rokakaka", "Lucky Arrow", "Caesar's Headband", "Clackers",
@@ -16,6 +16,7 @@ local TARGET_ITEMS = {
 }
 
 local LUCKY_ARROW_PRICE = 75000
+local PICKUP_COOLDOWN = 0.5  -- Задержка после подбора (в секундах)
 
 local State = {
     ESP = true,
@@ -30,7 +31,7 @@ local State = {
 }
 
 -- ============================================================
--- ========== 3. СЕРВИСЫ ======================================
+-- 2. СЕРВИСЫ
 -- ============================================================
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -38,7 +39,7 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ============================================================
--- ========== 4. ESP ==========================================
+-- 3. ESP
 -- ============================================================
 local espObjects = {}
 
@@ -116,7 +117,7 @@ local function cleanupESP()
 end
 
 -- ============================================================
--- ========== 5. AUTOFARM =====================================
+-- 4. AUTOFARM
 -- ============================================================
 local function findNearestItem()
     local char = LocalPlayer.Character
@@ -143,6 +144,7 @@ end
 local flyConnection = nil
 local cachedTarget = nil
 local lastScanTime = 0
+local lastPickupTime = 0
 
 local function startAutoFarm()
     if flyConnection then return end
@@ -152,6 +154,12 @@ local function startAutoFarm()
         if not char then return end
         local root = char:FindFirstChild("HumanoidRootPart")
         if not root then return end
+
+        -- Кулдаун после подбора (0.5 сек)
+        if tick() - lastPickupTime < PICKUP_COOLDOWN then
+            root.AssemblyLinearVelocity = Vector3.zero
+            return
+        end
 
         local now = tick()
         if now - lastScanTime > 0.5 or not cachedTarget or not cachedTarget.mesh.Parent then
@@ -170,6 +178,7 @@ local function startAutoFarm()
             if fireproximityprompt then
                 pcall(function() fireproximityprompt(target.prompt) end)
                 print("[AutoFarm] Подобрал: " .. target.name)
+                lastPickupTime = tick()
             end
             cachedTarget = nil
             lastScanTime = 0
@@ -198,7 +207,7 @@ local function stopAutoFarm()
 end
 
 -- ============================================================
--- ========== 6. AUTOSELL =====================================
+-- 5. AUTOSELL
 -- ============================================================
 local function autoSellItems()
     if not State.AutoSell then return end
@@ -229,7 +238,7 @@ local function autoSellItems()
 end
 
 -- ============================================================
--- ========== 7. АВТОПОКУПКА LUCKY ARROW ======================
+-- 6. АВТОПОКУПКА LUCKY ARROW
 -- ============================================================
 local function getPlayerMoney()
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
@@ -298,7 +307,7 @@ local function buyLuckyArrow()
 end
 
 -- ============================================================
--- ========== 8. NOCLIP & SPEED ===============================
+-- 7. NOCLIP & SPEED
 -- ============================================================
 local noclipConnection = nil
 local function applyNoclip()
@@ -334,7 +343,7 @@ local function applySpeed()
 end
 
 -- ============================================================
--- ========== 9. ЦИКЛЫ ========================================
+-- 8. ЦИКЛЫ
 -- ============================================================
 task.spawn(function()
     while task.wait(3) do
@@ -359,11 +368,11 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 -- ============================================================
--- ========== 10. KAVO UI =====================================
+-- 9. KAVO UI
 -- ============================================================
-local Window = Library.CreateLib("YBA Controller | v7.0", "BloodTheme")
+local Window = Library.CreateLib("YBA Controller | v7.1", "BloodTheme")
 
--- ----- Вкладка "AutoFarm" -----
+-- ----- Вкладка AutoFarm -----
 local FarmTab = Window:NewTab("AutoFarm")
 local FarmSection = FarmTab:NewSection("Автоматизация")
 
@@ -377,7 +386,7 @@ FarmSection:NewToggle("★ AutoFarm", "Автоматический поиск �
     end
 end)
 
-FarmSection:NewToggle("Авто-продажа", "Продавать предметы через кнопку 'I'll sell ALL of these'", function(v)
+FarmSection:NewToggle("Авто-продажа", "Продавать предметы через 'I'll sell ALL of these'", function(v)
     State.AutoSell = v
 end)
 
@@ -385,7 +394,7 @@ FarmSection:NewToggle("Авто-покупка Lucky Arrow", "Покупать �
     State.AutoBuyLucky = v
 end)
 
-FarmSection:NewSlider("Скорость полёта", "Скорость перемещения в AutoFarm", 200, 30, function(v)
+FarmSection:NewSlider("Скорость полёта", "Скорость перемещения", 200, 30, function(v)
     State.FlySpeed = v
 end)
 
@@ -393,16 +402,16 @@ FarmSection:NewSlider("Дистанция подбора", "На каком ра
     State.PickupRange = v
 end)
 
--- ----- Вкладка "Visuals" -----
+-- ----- Вкладка Visuals -----
 local VisualTab = Window:NewTab("Visuals")
 local VisualSection = VisualTab:NewSection("ESP")
 
-VisualSection:NewToggle("ESP предметов", "Подсвечивать предметы из списка", function(v)
+VisualSection:NewToggle("ESP предметов", "Подсвечивать предметы", function(v)
     State.ESP = v
     if not v then clearAllESP() end
 end)
 
--- ----- Вкладка "Movement" -----
+-- ----- Вкладка Movement -----
 local MoveTab = Window:NewTab("Movement")
 local MoveSection = MoveTab:NewSection("Скорость и коллизии")
 
@@ -421,9 +430,9 @@ MoveSection:NewSlider("Скорость ходьбы", "Значение WalkSpe
     if State.Speed then applySpeed() end
 end)
 
--- ----- Вкладка "Items" -----
+-- ----- Вкладка Items -----
 local ItemsTab = Window:NewTab("Items")
-local ItemsSection = ItemsTab:NewSection("Выбор предметов для поиска")
+local ItemsSection = ItemsTab:NewSection("Выбор предметов")
 
 local allItems = {
     "Rokakaka", "Lucky Arrow", "Caesar's Headband", "Clackers",
@@ -452,14 +461,14 @@ ItemsSection:NewButton("Очистить список", "Удалить все �
     print("[YBA] Список очищен")
 end)
 
--- ----- Вкладка "Info" -----
+-- ----- Вкладка Info -----
 local InfoTab = Window:NewTab("Info")
 local InfoSection = InfoTab:NewSection("О скрипте")
 
-InfoSection:NewLabel("YBA Controller v7.0 (Kavo UI)")
+InfoSection:NewLabel("YBA Controller v7.1")
+InfoSection:NewLabel("Задержка подбора: " .. PICKUP_COOLDOWN .. " сек")
 InfoSection:NewLabel("ESP ищет предметы в Item_Spawns.Items")
 InfoSection:NewLabel("AutoFarm использует fireproximityprompt")
-InfoSection:NewLabel("AutoSell нажимает 'I'll sell ALL of these'")
 InfoSection:NewLabel("Внимание: читы могут привести к бану!")
 
-print("[YBA Controller] v7.0 загружена. Kavo UI активен.")
+print("[YBA Controller] v7.1 загружена. Задержка подбора: " .. PICKUP_COOLDOWN .. " сек.")
